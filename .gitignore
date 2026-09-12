@@ -1,0 +1,9 @@
+models/*
+!models/.gitkeep
+bin/
+obj/
+.vs/
+.idea/
+*.user
+.DS_Store
+CLAUDE.local.md
