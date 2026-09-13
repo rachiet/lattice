@@ -24,8 +24,8 @@ hosted APIs return finished text, so there are no logits to mask.
 
 ## Stack
 
-- `LLamaSharp` + a backend package (e.g. `LLamaSharp.Backend.Metal`,
-  `LLamaSharp.Backend.Cpu`). No need to build llama.cpp.
+- `LLamaSharp` 0.27.0 + `LLamaSharp.Backend.Cpu` 0.27.0 (includes the Metal
+  binaries for osx-arm64; there is no separate Metal package). No need to build llama.cpp.
 - Reference model: `qwen2.5-0.5b-instruct-q4_k_m.gguf`, placed in `models/`
   (gitignored). GGUF contains weights, tokenizer vocab and metadata.
 - Hook: `LLama.Sampling.ISamplingPipeline`. `BaseSamplingPipeline.ProcessLogits`
@@ -56,4 +56,5 @@ may be `":` or `,"` or `"}\n`.
 
 ## Status
 
-Folder structure created. No code yet. Next: roadmap step 1.
+Step 1 done: `samples/Lattice.Smoke` loads the model with all layers on Metal and
+generates ~40 tokens/s. Next: roadmap step 2.
