@@ -56,5 +56,9 @@ may be `":` or `,"` or `"}\n`.
 
 ## Status
 
-Step 1 done: `samples/Lattice.Smoke` loads the model with all layers on Metal and
-generates ~40 tokens/s. Next: roadmap step 2.
+Steps 1–2 done. `samples/Lattice.Smoke` loads the model with all layers on Metal
+(~40 tokens/s); `--force` uses `ForceFirstTokenPipeline` to force `{` (token 90)
+as the first token. Next: roadmap step 3.
+
+Gotcha: `StatelessExecutor` does not call `ISamplingPipeline.Accept`, so state
+that must advance per token cannot rely on it.
