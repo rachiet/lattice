@@ -40,25 +40,9 @@ hosted APIs return finished text, so there are no logits to mask.
 - `benchmarks` — plain vs constrained runs
 - `models` — GGUF files (gitignored)
 
-## Roadmap
+## Implementation notes
 
-1. Smoke test: load GGUF, confirm GPU backend is active, generate a few tokens.
-2. Custom `ISamplingPipeline` that forces a single specific token.
-3. JSON Schema → state machine compiler.
-4. Prefix index (trie) over the token vocabulary, read from the GGUF tokenizer.
-5. Fast per-step legal-token lookup. Naive = scan all vocab tokens per step.
-   Real version = cached legal-token bitset masks per parser state.
-6. Benchmarks: same model and tasks, plain vs constrained; count parse failures
-   and schema violations. Repeat across 0.5B / 1.5B / 3B.
-
-Hard part throughout: tokens don't align to grammar boundaries — a single token
-may be `":` or `,"` or `"}\n`.
-
-## Status
-
-Steps 1–2 done. `samples/Lattice.Smoke` loads the model with all layers on Metal
-(~40 tokens/s); `--force` uses `ForceFirstTokenPipeline` to force `{` (token 90)
-as the first token. Next: roadmap step 3.
-
-Gotcha: `StatelessExecutor` does not call `ISamplingPipeline.Accept`, so state
-that must advance per token cannot rely on it.
+- Tokens don't align to grammar boundaries — a single token may be `":` or `,"`
+  or `"}\n`. Legal-token checks must handle tokens that span grammar positions.
+- `StatelessExecutor` does not call `ISamplingPipeline.Accept`, so state that
+  must advance per token cannot rely on it.

@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="LLamaSharp" Version="0.27.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
+    <None Include="grammars/*.gbnf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
