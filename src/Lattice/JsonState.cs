@@ -1,20 +1,14 @@
 namespace Lattice;
 
 /// What the next character is allowed to be, given everything read so far.
-/// The same character is legal in one state and illegal in another — `}` closes
-/// an object after a value but is nonsense after a `:` — so validity is a
-/// property of the character *and* the expectation, never the character alone.
 ///
-/// Every name answers one question: what may come next. Inside a number the
-/// names also carry which states may stop — a `*Digit` name owes exactly one
-/// character and cannot end the number, a `More*` name may either continue or
-/// let it end. Those four are precisely the ones whose arms call EndNumber.
+/// Inside a number, a `*Digit` name owes a character and cannot end the number;
+/// a `More*` name may either continue or end it.
 public enum Expect
 {
-    /// Nothing has been read yet and only `{` is legal. Lattice's contract is
-    /// that the output is a JSON *object*, so `123`, `[1]` and `"hi"` — all
-    /// valid JSON documents — are refused at the very first character.
-    /// It is the zero value, so `default(JsonState)` starts here.
+    /// Only `{`. The document must be a JSON object, so `123`, `[1]` and `"hi"`
+    /// are refused at the first character. The zero value, so a new JsonState
+    /// starts here.
     Object,
 
     /// A value must start here: after `:`, or after `,` in an array.
@@ -23,8 +17,8 @@ public enum Expect
     ValueOrClose,
     /// A key's opening quote, or `}` to close an empty object. Reached from `{`.
     KeyOrClose,
-    /// A key's opening quote, and nothing else — no `}`, because `{"a":1,}` is
-    /// invalid. Reached from a `,` inside an object.
+    /// A key's opening quote. No `}` — `{"a":1,}` is invalid. Reached from a
+    /// `,` inside an object.
     Key,
     /// More of the key, or the `"` that closes it.
     KeyText,
@@ -37,8 +31,8 @@ public enum Expect
     CommaOrClose,
     /// Only a digit. Reached from `-`.
     FirstDigit,
-    /// `.`, `e`/`E`, or the number ends here. A further digit would make a
-    /// leading zero, which JSON forbids. Reached from a `0`.
+    /// `.`, `e`/`E`, or the number ends here. No further digit — that would be
+    /// a leading zero. Reached from a `0`.
     FractionOrExponent,
     /// More digits, `.`, `e`/`E`, or the number ends here.
     MoreInteger,
@@ -61,15 +55,11 @@ public enum Expect
 /// A character-level JSON checker: does this character keep the document a
 /// valid JSON prefix, and is that prefix now complete?
 ///
-/// Every field is a value type, so copying a JsonState copies the whole thing.
-/// The sampler leans on that hard — it makes one throwaway copy per vocabulary
-/// token per generated token (~151k copies a step), so a Stack<T> here would
-/// both allocate and, being a reference, leak probe writes back into the
-/// committed state. The open containers are packed into a ulong bitmask instead.
+/// All fields are value types, so copying a JsonState copies the whole state.
+/// Open containers are packed into a ulong bitmask, one bit each.
 public struct JsonState
 {
-    /// Nesting beyond this is rejected, which costs us nothing real: the mask
-    /// simply stops offering `{` and `[` at depth 64.
+    /// Objects and arrays nested deeper than this are rejected.
     public const int MaxDepth = 64;
 
     Expect _expect;
@@ -83,9 +73,7 @@ public struct JsonState
     public readonly Expect Expecting => _expect;
     public readonly int Depth => _depth;
 
-    /// True once the object has closed — the `}` that takes depth back to 0,
-    /// and the only way to get here. The sampler uses this to switch the mask
-    /// over to "EOS only".
+    /// True once the object has closed — the `}` that takes depth back to 0.
     public readonly bool IsComplete => _expect == Expect.End;
 
     /// Feeds one character. Returns false if it would break the document, in
@@ -117,9 +105,8 @@ public struct JsonState
 
         Expect.CommaOrClose => AdvanceCommaOrClose(c),
 
-        // A number has no closing character: it ends when a delimiter arrives.
-        // Where that is legal, finish the value and re-read the delimiter from
-        // CommaOrClose, which already knows what to do with it.
+        // A number has no closing character: it ends when a delimiter arrives,
+        // which is then re-read from CommaOrClose.
         Expect.FirstDigit => c == '0' ? Enter(Expect.FractionOrExponent)
                            : IsDigit19(c) && Enter(Expect.MoreInteger),
 
@@ -191,8 +178,7 @@ public struct JsonState
 
         if (c == '\\') { _escaped = true; return true; }
 
-        // The quote the model chose to close with — we never decide this, we
-        // only confirm that closing here is allowed. It always is.
+        // A quote closes the key or the string value.
         if (c == '"') return _expect == Expect.KeyText ? Enter(Expect.Colon) : EndValue();
 
         return c >= 0x20;  // raw control characters must be escaped
