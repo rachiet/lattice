@@ -7,9 +7,8 @@ using LLama.Native;
 using LLama.Sampling;
 
 // Smoke test: load the model, generate, and check whether the output parses as JSON.
-// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--force | --grammar] [--runs N]
+// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--grammar] [--runs N]
 //   (no flag)  plain sampling
-//   --force    force `{` as the first token (ForceFirstTokenPipeline)
 //   --grammar  constrain with llama.cpp's built-in JSON grammar (grammars/json.gbnf)
 
 var modelPath = args.FirstOrDefault(a => !a.StartsWith("--") && !int.TryParse(a, out _))
@@ -20,7 +19,6 @@ if (!File.Exists(modelPath))
     return 1;
 }
 
-var force = args.Contains("--force");
 var useGrammar = args.Contains("--grammar");
 var runsIndex = Array.IndexOf(args, "--runs");
 var runs = runsIndex >= 0 ? int.Parse(args[runsIndex + 1]) : 1;
@@ -45,10 +43,9 @@ var template = new LLamaTemplate(weights) { AddAssistant = true };
 template.Add("user", "Give me a JSON object describing a cat.");
 var prompt = Encoding.UTF8.GetString(template.Apply());
 
-var braceToken = weights.Tokenize("{", add_bos: false, special: false, Encoding.UTF8)[0];
 var gbnf = useGrammar ? File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "grammars", "json.gbnf")) : null;
 
-Console.WriteLine($"mode: {(useGrammar ? "grammar" : force ? "force" : "plain")}, runs: {runs}");
+Console.WriteLine($"mode: {(useGrammar ? "grammar" : "plain")}, runs: {runs}");
 
 var valid = 0;
 var totalPieces = 0;
@@ -58,7 +55,6 @@ for (var run = 1; run <= runs; run++)
 {
     // A fresh pipeline per run: samplers keep per-generation state.
     ISamplingPipeline pipeline = useGrammar ? new DefaultSamplingPipeline { Grammar = new Grammar(gbnf!, "root") }
-                               : force ? new ForceFirstTokenPipeline(braceToken)
                                : new DefaultSamplingPipeline();
 
     var inferenceParams = new InferenceParams
