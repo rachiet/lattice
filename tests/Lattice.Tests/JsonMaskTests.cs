@@ -157,11 +157,13 @@ public class JsonMaskTests
         Assert.All(logits, logit => Assert.True(float.IsNegativeInfinity(logit)));
     }
 
-    [Fact]
-    public void ApplyRejectsALogitBufferSmallerThanTheVocabulary()
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1)]
+    public void ApplyRejectsALogitBufferThatIsNotTheVocabularySize(int difference)
     {
         var mask = NewMask();
 
-        Assert.Throws<ArgumentException>(() => mask.Apply(new float[Vocab.Length - 1]));
+        Assert.Throws<ArgumentException>(() => mask.Apply(new float[Vocab.Length + difference]));
     }
 }

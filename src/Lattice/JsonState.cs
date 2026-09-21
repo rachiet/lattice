@@ -76,8 +76,9 @@ public struct JsonState
     /// True once the object has closed — the `}` that takes depth back to 0.
     public readonly bool IsComplete => _expect == Expect.End;
 
-    /// Feeds one character. Returns false if it would break the document, in
-    /// which case the state is left untouched for the caller to discard.
+    /// Feeds one character. Returns true if the document is still valid and the
+    /// state has advanced; false if the character breaks it, in which case the
+    /// state may have partly advanced and must be discarded.
     public bool TryAdvance(char c) => _expect switch
     {
         Expect.KeyText or Expect.StringText => AdvanceString(c),

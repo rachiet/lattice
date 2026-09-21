@@ -35,7 +35,7 @@ public sealed class JsonMask
     /// infinity, and leaves the rest untouched.
     public void Apply(Span<float> logits)
     {
-        if (logits.Length < _vocab.Length)
+        if (logits.Length != _vocab.Length)
             throw new ArgumentException(
                 $"logits has {logits.Length} entries, vocabulary has {_vocab.Length}", nameof(logits));
 
