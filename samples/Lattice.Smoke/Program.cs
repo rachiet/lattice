@@ -5,11 +5,13 @@ using LLama;
 using LLama.Common;
 using LLama.Native;
 using LLama.Sampling;
+using Lattice.LLamaSharp;
 
 // Smoke test: load the model, generate, and check whether the output parses as JSON.
-// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--grammar] [--runs N]
+// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--grammar | --lattice] [--runs N]
 //   (no flag)  plain sampling
 //   --grammar  constrain with llama.cpp's built-in JSON grammar (grammars/json.gbnf)
+//   --lattice  constrain with Lattice's JSON mask
 
 var modelPath = args.FirstOrDefault(a => !a.StartsWith("--") && !int.TryParse(a, out _))
                 ?? "models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
@@ -20,6 +22,7 @@ if (!File.Exists(modelPath))
 }
 
 var useGrammar = args.Contains("--grammar");
+var useLattice = args.Contains("--lattice");
 var runsIndex = Array.IndexOf(args, "--runs");
 var runs = runsIndex >= 0 ? int.Parse(args[runsIndex + 1]) : 1;
 
@@ -45,7 +48,10 @@ var prompt = Encoding.UTF8.GetString(template.Apply());
 
 var gbnf = useGrammar ? File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "grammars", "json.gbnf")) : null;
 
-Console.WriteLine($"mode: {(useGrammar ? "grammar" : "plain")}, runs: {runs}");
+// Decoding the vocabulary takes a moment, so build this once and reset it per run.
+using var lattice = useLattice ? new JsonSamplingPipeline(weights) : null;
+
+Console.WriteLine($"mode: {(useLattice ? "lattice" : useGrammar ? "grammar" : "plain")}, runs: {runs}");
 
 var valid = 0;
 var totalPieces = 0;
@@ -53,8 +59,11 @@ var totalSeconds = 0.0;
 
 for (var run = 1; run <= runs; run++)
 {
-    // A fresh pipeline per run: samplers keep per-generation state.
-    ISamplingPipeline pipeline = useGrammar ? new DefaultSamplingPipeline { Grammar = new Grammar(gbnf!, "root") }
+    // Samplers keep per-generation state, so each run starts from a clean one.
+    lattice?.Reset();
+
+    ISamplingPipeline pipeline = useLattice ? lattice!
+                               : useGrammar ? new DefaultSamplingPipeline { Grammar = new Grammar(gbnf!, "root") }
                                : new DefaultSamplingPipeline();
 
     var inferenceParams = new InferenceParams

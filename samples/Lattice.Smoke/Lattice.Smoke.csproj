@@ -13,4 +13,8 @@
     <None Include="grammars/*.gbnf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Lattice.LLamaSharp\Lattice.LLamaSharp.csproj" />
+  </ItemGroup>
+
 </Project>
