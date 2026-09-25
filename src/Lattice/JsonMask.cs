@@ -9,12 +9,15 @@ public sealed class JsonMask
 {
     readonly string[] _vocab;
     readonly int _endOfSequence;
+    readonly JsonSchema? _schema;
     JsonState _state;
 
     /// <param name="vocab">Every token id's text, indexed by id. Held by
     /// reference and never modified.</param>
     /// <param name="endOfSequence">The token that ends generation.</param>
-    public JsonMask(string[] vocab, int endOfSequence)
+    /// <param name="schema">The schema the object must match, or null to accept
+    /// any JSON object.</param>
+    public JsonMask(string[] vocab, int endOfSequence, JsonSchema? schema = null)
     {
         ArgumentNullException.ThrowIfNull(vocab);
         if (endOfSequence < 0 || endOfSequence >= vocab.Length)
@@ -22,6 +25,8 @@ public sealed class JsonMask
 
         _vocab = vocab;
         _endOfSequence = endOfSequence;
+        _schema = schema;
+        _state = schema is null ? new JsonState() : new JsonState(schema);
     }
 
     /// True once the object has closed, after which the end-of-sequence token
@@ -71,7 +76,7 @@ public sealed class JsonMask
     }
 
     /// Starts a fresh document.
-    public void Reset() => _state = default;
+    public void Reset() => _state = _schema is null ? new JsonState() : new JsonState(_schema);
 
     /// A token is legal when every one of its characters is. The probe is a
     /// copy, so a rejection leaves the committed state untouched.

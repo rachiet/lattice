@@ -1,3 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+
 namespace Lattice;
 
 /// What the next character is allowed to be, given everything read so far.
@@ -26,6 +30,9 @@ public enum Expect
     Colon,
     /// More of the string, or the `"` that closes it.
     StringText,
+    /// More of a string value the schema restricts to an `enum`, or the `"` that
+    /// closes it.
+    EnumText,
     /// A `,`, or the closer matching the innermost container. Reached whenever
     /// a value finishes.
     CommaOrClose,
@@ -55,8 +62,13 @@ public enum Expect
 /// A character-level JSON checker: does this character keep the document a
 /// valid JSON prefix, and is that prefix now complete?
 ///
-/// All fields are value types, so copying a JsonState copies the whole state.
-/// Open containers are packed into a ulong bitmask, one bit each.
+/// Copying a JsonState copies the whole state: every field is a value type
+/// except the schema, which is immutable and shared. Open containers are packed
+/// into a ulong bitmask, one bit each.
+///
+/// Without a schema the checker accepts any JSON object. With one it also
+/// enforces the declared property names, their types, the required ones and any
+/// enums.
 public struct JsonState
 {
     /// Objects and arrays nested deeper than this are rejected.
@@ -69,6 +81,26 @@ public struct JsonState
     int _hexLeft;       // remaining hex digits owed to a \u escape
     byte _literal;      // which word is being matched: 1 = true, 2 = false, 3 = null
     byte _literalIndex; // how much of that word has been consumed
+
+    readonly JsonSchema? _schema;  // null: any-shape JSON, no schema checks
+    FrameStack _frames;  // one per open container the schema governs, indexed by depth - 1
+    int _freeDepth;      // containers open inside a free-form value
+    ulong _candidates;   // names still possible for the key or enum member being read
+    int _textPos;        // characters of that name read so far
+    int _property;       // the property the last closed key resolved to
+    bool _integerOnly;   // the number being read may not have a fraction or exponent
+
+    /// A checker that accepts any JSON object.
+    public JsonState()
+    {
+    }
+
+    /// A checker that accepts only JSON objects matching `schema`.
+    public JsonState(JsonSchema schema)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        _schema = schema;
+    }
 
     public readonly Expect Expecting => _expect;
     public readonly int Depth => _depth;
@@ -83,7 +115,10 @@ public struct JsonState
     {
         Expect.KeyText or Expect.StringText => AdvanceString(c),
 
-        Expect.Object => IsSpace(c) || c == '{' && Push(array: false, Expect.KeyOrClose),
+        Expect.EnumText => AdvanceEnum(c),
+
+        Expect.Object => IsSpace(c) || c == '{'
+            && Push(array: false, Expect.KeyOrClose, _schema is not null, JsonSchema.RootNode),
 
         Expect.Value => IsSpace(c) || BeginValue(c),
 
@@ -95,12 +130,12 @@ public struct JsonState
 
         Expect.KeyOrClose => IsSpace(c) || c switch
         {
-            '"' => Enter(Expect.KeyText),
+            '"' => BeginKey(),
             '}' => Pop(array: false),
             _ => false,
         },
 
-        Expect.Key => IsSpace(c) || c == '"' && Enter(Expect.KeyText),
+        Expect.Key => IsSpace(c) || c == '"' && BeginKey(),
 
         Expect.Colon => IsSpace(c) || c == ':' && Enter(Expect.Value),
 
@@ -113,15 +148,15 @@ public struct JsonState
 
         Expect.FractionOrExponent => c switch
         {
-            '.' => Enter(Expect.FractionDigit),
-            'e' or 'E' => Enter(Expect.ExponentSignOrDigit),
+            '.' when !_integerOnly => Enter(Expect.FractionDigit),
+            'e' or 'E' when !_integerOnly => Enter(Expect.ExponentSignOrDigit),
             _ => EndNumber(c),  // a second digit would be a leading zero
         },
 
         Expect.MoreInteger => IsDigit(c) || c switch
         {
-            '.' => Enter(Expect.FractionDigit),
-            'e' or 'E' => Enter(Expect.ExponentSignOrDigit),
+            '.' when !_integerOnly => Enter(Expect.FractionDigit),
+            'e' or 'E' when !_integerOnly => Enter(Expect.ExponentSignOrDigit),
             _ => EndNumber(c),
         },
 
@@ -161,6 +196,15 @@ public struct JsonState
 
     bool AdvanceString(char c)
     {
+        // A declared name is matched literally against the schema's prefix table,
+        // so none of the escape machinery below applies to one.
+        if (_expect == Expect.KeyText && SchemaActive)
+        {
+            if (c == '"') return CloseKey();
+            if (c == '\\') return false;
+            return Narrow(_schema!.KeysOf(CurrentFrame.Node), c);
+        }
+
         // \u must be followed by exactly four hex digits before anything else.
         if (_hexLeft > 0)
         {
@@ -195,17 +239,57 @@ public struct JsonState
 
     bool BeginValue(char c)
     {
+        var declared = JsonType.Any;
+        var node = -1;
+        var itemType = JsonType.Any;
+        var itemNode = -1;
+        PrefixTable? members = null;
+
+        if (SchemaActive)
+        {
+            if (InnermostIsArray())
+            {
+                // Every item of an array shares one declared type.
+                declared = CurrentFrame.ItemType;
+                node = CurrentFrame.Node;
+            }
+            else
+            {
+                var property = _schema!.PropertyAt(CurrentFrame.Node, _property);
+                declared = property.Type;
+                node = property.Node;
+                itemType = property.ItemType;
+                itemNode = property.ItemNode;
+                members = property.Enum;
+            }
+        }
+
         switch (c)
         {
-            case '{': return Push(array: false, Expect.KeyOrClose);
-            case '[': return Push(array: true, Expect.ValueOrClose);
-            case '"': return Enter(Expect.StringText);
-            case '-': return Enter(Expect.FirstDigit);
-            case '0': return Enter(Expect.FractionOrExponent);
-            case 't': return BeginLiteral(1);
-            case 'f': return BeginLiteral(2);
-            case 'n': return BeginLiteral(3);
-            default: return IsDigit19(c) && Enter(Expect.MoreInteger);
+            case '{':
+                return Allows(declared, JsonType.Object)
+                    && Push(array: false, Expect.KeyOrClose, node >= 0, node);
+            case '[':
+                return Allows(declared, JsonType.Array)
+                    && Push(array: true, Expect.ValueOrClose, SchemaActive, itemNode, itemType);
+            case '"':
+                if (!Allows(declared, JsonType.String)) return false;
+                return members is null ? Enter(Expect.StringText) : BeginEnum(members);
+            case '-':
+                if (!AllowsNumber(declared)) return false;
+                _integerOnly = declared is JsonType.Integer;
+                return Enter(Expect.FirstDigit);
+            case '0':
+                if (!AllowsNumber(declared)) return false;
+                _integerOnly = declared is JsonType.Integer;
+                return Enter(Expect.FractionOrExponent);
+            case 't': return Allows(declared, JsonType.Boolean) && BeginLiteral(1);
+            case 'f': return Allows(declared, JsonType.Boolean) && BeginLiteral(2);
+            case 'n': return Allows(declared, JsonType.Null) && BeginLiteral(3);
+            default:
+                if (!IsDigit19(c) || !AllowsNumber(declared)) return false;
+                _integerOnly = declared is JsonType.Integer;
+                return Enter(Expect.MoreInteger);
         }
     }
 
@@ -217,19 +301,46 @@ public struct JsonState
         return true;
     }
 
-    bool Push(bool array, Expect next)
+    /// Opens a container. `governed` says whether the schema constrains what goes
+    /// inside it; `node` is the object schema for an object, or an array's item
+    /// schema, and `itemType` the type of an array's items.
+    bool Push(bool array, Expect next, bool governed = false, int node = -1,
+              JsonType itemType = JsonType.Any)
     {
         if (_depth == MaxDepth) return false;
         if (array) _containers |= 1UL << _depth;
         else _containers &= ~(1UL << _depth);
         _depth++;
         _expect = next;
+
+        if (_schema is null) return true;
+
+        // A free-form value has no frame, and every container inside it is
+        // free-form too, so governed levels are always the outermost ones and
+        // depth - 1 stays their index.
+        if (_freeDepth > 0 || !governed)
+        {
+            _freeDepth++;
+            return true;
+        }
+
+        if (_depth > JsonSchema.MaxNesting) return false;
+
+        CurrentFrame = new Frame { Node = node, ItemType = itemType };
         return true;
     }
 
     bool Pop(bool array)
     {
         if (_depth == 0 || InnermostIsArray() != array) return false;
+
+        // An object cannot close while a required property is still unwritten.
+        if (SchemaActive && !array
+            && (_schema!.RequiredOf(CurrentFrame.Node) & ~CurrentFrame.Used) != 0)
+            return false;
+
+        if (_schema is not null && _freeDepth > 0) _freeDepth--;
+
         _depth--;
         return EndValue();
     }
@@ -237,6 +348,7 @@ public struct JsonState
     /// A value just completed. At depth 0 that was the whole document.
     bool EndValue()
     {
+        _integerOnly = false;
         _expect = _depth == 0 ? Expect.End : Expect.CommaOrClose;
         return true;
     }
@@ -255,10 +367,95 @@ public struct JsonState
         return true;
     }
 
+    /// True when the schema constrains the position being read: there is a schema
+    /// and the position is not inside a free-form value.
+    readonly bool SchemaActive => _schema is not null && _freeDepth == 0;
+
+    /// The frame for the innermost governed container.
+    [UnscopedRef]
+    ref Frame CurrentFrame => ref _frames[_depth - 1];
+
+    /// A key's opening quote. Every declared name this object has not written yet
+    /// is a candidate.
+    bool BeginKey()
+    {
+        _expect = Expect.KeyText;
+        if (!SchemaActive) return true;
+
+        _candidates = _schema!.KeysOf(CurrentFrame.Node).All & ~CurrentFrame.Used;
+        _textPos = 0;
+        return _candidates != 0;  // every declared name is already written
+    }
+
+    /// Drops every candidate that does not have `c` at the current position.
+    bool Narrow(PrefixTable table, char c)
+    {
+        _candidates &= table.At(_textPos, c);
+        _textPos++;
+        return _candidates != 0;
+    }
+
+    /// A key's closing quote. One candidate ends here, and it fixes the type of
+    /// the value that follows.
+    bool CloseKey()
+    {
+        var finished = _candidates & _schema!.KeysOf(CurrentFrame.Node).EndingAt(_textPos);
+        if (finished == 0) return false;  // a prefix of a declared name, not one
+
+        _property = BitOperations.TrailingZeroCount(finished);
+        CurrentFrame.Used |= 1UL << _property;
+        return Enter(Expect.Colon);
+    }
+
+    bool BeginEnum(PrefixTable members)
+    {
+        _candidates = members.All;
+        _textPos = 0;
+        return Enter(Expect.EnumText);
+    }
+
+    bool AdvanceEnum(char c)
+    {
+        var members = _schema!.PropertyAt(CurrentFrame.Node, _property).Enum!;
+
+        if (c == '"')
+            return (_candidates & members.EndingAt(_textPos)) != 0 && EndValue();
+
+        if (c == '\\') return false;  // members are matched literally
+        return Narrow(members, c);
+    }
+
+    static bool Allows(JsonType declared, JsonType actual) =>
+        declared is JsonType.Any || declared == actual;
+
+    static bool AllowsNumber(JsonType declared) =>
+        declared is JsonType.Any or JsonType.Number or JsonType.Integer;
+
     readonly bool InnermostIsArray() => (_containers & 1UL << _depth - 1) != 0;
 
     static bool IsSpace(char c) => c is ' ' or '\t' or '\n' or '\r';
     static bool IsDigit(char c) => c is >= '0' and <= '9';
     static bool IsDigit19(char c) => c is >= '1' and <= '9';
     static bool IsHex(char c) => IsDigit(c) || c is >= 'a' and <= 'f' or >= 'A' and <= 'F';
+}
+
+/// What one open container needs from the schema.
+struct Frame
+{
+    /// Declared properties already written in this object.
+    public ulong Used;
+
+    /// The object schema for this level, or an array's item schema. -1 when the
+    /// level holds no object schema.
+    public int Node;
+
+    /// The declared type of an array's items.
+    public JsonType ItemType;
+}
+
+/// The frames of the open containers, innermost at `Depth - 1`.
+[InlineArray(JsonSchema.MaxNesting)]
+struct FrameStack
+{
+    Frame _first;
 }
