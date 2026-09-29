@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "breed": { "type": "string" },
+    "age": { "type": "integer" },
+    "weight": { "type": "number" },
+    "indoor": { "type": "boolean" },
+    "colour": { "type": "string", "enum": ["black", "white", "ginger", "tabby", "grey"] },
+    "toys": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["name", "breed", "age", "colour"]
+}

@@ -11,18 +11,30 @@ namespace Lattice.LLamaSharp;
 /// normally, so the model keeps its own preferences among the legal ones.
 public sealed class JsonSamplingPipeline : ISamplingPipeline
 {
-    readonly DefaultSamplingPipeline _inner = new();
     readonly JsonMask _mask;
+    DefaultSamplingPipeline _inner = new();
+    uint _seed;
 
     /// <param name="weights">The model whose vocabulary the mask is built from.</param>
-    public JsonSamplingPipeline(LLamaWeights weights)
+    /// <param name="schema">The schema the object must match, or null to accept any
+    /// JSON object.</param>
+    public JsonSamplingPipeline(LLamaWeights weights, JsonSchema? schema = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
 
         var eos = weights.Vocab.EOS ?? throw new ArgumentException(
             "the model has no end-of-sequence token", nameof(weights));
 
-        _mask = new JsonMask(DecodeVocabulary(weights), (int)eos);
+        _mask = new JsonMask(DecodeVocabulary(weights), (int)eos, schema);
+        _seed = _inner.Seed;
+    }
+
+    /// The seed the inner sampler's random draws come from. Takes effect from the
+    /// next Reset, and decides which of the legal tokens is chosen.
+    public uint Seed
+    {
+        get => _seed;
+        set => _seed = value;
     }
 
     /// What the next character may be.
@@ -51,7 +63,11 @@ public sealed class JsonSamplingPipeline : ISamplingPipeline
     public void Reset()
     {
         _mask.Reset();
-        _inner.Reset();
+
+        // The sampler chain reads the seed once, when it is built, so picking up a
+        // new seed takes a new pipeline.
+        _inner.Dispose();
+        _inner = new DefaultSamplingPipeline { Seed = _seed };
     }
 
     public void Dispose() => _inner.Dispose();
