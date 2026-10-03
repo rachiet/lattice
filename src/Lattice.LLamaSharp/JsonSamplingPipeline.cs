@@ -37,12 +37,6 @@ public sealed class JsonSamplingPipeline : ISamplingPipeline
         set => _seed = value;
     }
 
-    /// What the next character may be.
-    public Expect Expecting => _mask.Expecting;
-
-    /// True once the object has closed.
-    public bool IsComplete => _mask.IsComplete;
-
     public LLamaToken Sample(SafeLLamaContextHandle ctx, int index)
     {
         _mask.Apply(ctx.GetLogitsIth(index));
