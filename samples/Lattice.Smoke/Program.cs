@@ -9,33 +9,40 @@ using Lattice;
 using Lattice.LLamaSharp;
 
 // Smoke test: load the model, generate, and check whether the output parses as JSON.
-// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--grammar | --lattice] [--runs N] [--schema FILE]
-//   (no flag)  plain sampling
-//   --grammar  constrain with llama.cpp's built-in JSON grammar (grammars/json.gbnf)
-//   --lattice  constrain with Lattice's JSON mask
-//   --schema   constrain --lattice to a JSON Schema, and put that schema in the prompt
+// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--model PATH] [--sampler MODE] [--runs N] [--schema FILE]
+//   --model    the GGUF to load (default: models/qwen2.5-0.5b-instruct-q4_k_m.gguf)
+//   --sampler  plain (default), grammar (llama.cpp's built-in JSON grammar, grammars/json.gbnf)
+//              or lattice (Lattice's JSON mask)
+//   --runs     how many generations to run (default: 1)
+//   --schema   constrain lattice to a JSON Schema, and put that schema in the prompt
 
-// Read before the model path, which otherwise claims the first bare argument.
-var schemaIndex = Array.IndexOf(args, "--schema");
-var schemaPath = schemaIndex >= 0 ? args[schemaIndex + 1] : null;
-if (schemaPath is not null && !File.Exists(schemaPath))
+var options = new Dictionary<string, string>();
+for (var i = 0; i < args.Length; i++)
 {
-    Console.Error.WriteLine($"Schema not found: {Path.GetFullPath(schemaPath)}");
-    return 1;
+    if (args[i] is not ("--model" or "--sampler" or "--runs" or "--schema"))
+        return Fail($"Unknown argument: {args[i]}");
+    if (i + 1 == args.Length)
+        return Fail($"{args[i]} needs a value");
+    options[args[i]] = args[++i];
 }
 
-var modelPath = args.FirstOrDefault(a => !a.StartsWith("--") && a != schemaPath && !int.TryParse(a, out _))
-                ?? "models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+var modelPath = options.GetValueOrDefault("--model", "models/qwen2.5-0.5b-instruct-q4_k_m.gguf");
 if (!File.Exists(modelPath))
-{
-    Console.Error.WriteLine($"Model not found: {Path.GetFullPath(modelPath)}");
-    return 1;
-}
+    return Fail($"Model not found: {Path.GetFullPath(modelPath)}");
 
-var useGrammar = args.Contains("--grammar");
-var useLattice = args.Contains("--lattice");
-var runsIndex = Array.IndexOf(args, "--runs");
-var runs = runsIndex >= 0 ? int.Parse(args[runsIndex + 1]) : 1;
+var sampler = options.GetValueOrDefault("--sampler", "plain");
+if (sampler is not ("plain" or "grammar" or "lattice"))
+    return Fail($"Unknown sampler: {sampler} (expected plain, grammar or lattice)");
+var useGrammar = sampler == "grammar";
+var useLattice = sampler == "lattice";
+
+var runs = 1;
+if (options.TryGetValue("--runs", out var runsText) && (!int.TryParse(runsText, out runs) || runs < 1))
+    return Fail($"--runs must be a positive integer, got {runsText}");
+
+var schemaPath = options.GetValueOrDefault("--schema");
+if (schemaPath is not null && !File.Exists(schemaPath))
+    return Fail($"Schema not found: {Path.GetFullPath(schemaPath)}");
 
 var schemaText = schemaPath is null ? null : File.ReadAllText(schemaPath);
 var schema = schemaText is null ? null : JsonSchema.Parse(schemaText);
@@ -120,6 +127,12 @@ for (var run = 1; run <= runs; run++)
 
 Console.WriteLine($"\n=== {valid}/{runs} valid, {totalPieces / totalSeconds:F1} pieces/s ===");
 return 0;
+
+static int Fail(string message)
+{
+    Console.Error.WriteLine(message);
+    return 1;
+}
 
 static bool Parses(string text)
 {
