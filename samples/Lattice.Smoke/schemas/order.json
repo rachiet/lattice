@@ -1,0 +1,47 @@
+{
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "integer" },
+    "status": { "type": "string", "enum": ["pending", "paid", "shipped", "delivered", "cancelled"] },
+    "customer": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "address": {
+          "type": "object",
+          "properties": {
+            "street": { "type": "string" },
+            "city": { "type": "string" },
+            "postcode": { "type": "string" },
+            "country": { "type": "string", "enum": ["UK", "US", "DE", "FR", "IN"] }
+          },
+          "required": ["street", "city", "country"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["name", "email", "address"],
+      "additionalProperties": false
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "name": { "type": "string" },
+          "size": { "type": "string", "enum": ["XS", "S", "M", "L", "XL"] },
+          "quantity": { "type": "integer" },
+          "unitPrice": { "type": "number" },
+          "giftWrap": { "type": "boolean" }
+        },
+        "required": ["sku", "size", "quantity", "unitPrice"],
+        "additionalProperties": false
+      }
+    },
+    "total": { "type": "number" },
+    "express": { "type": "boolean" }
+  },
+  "required": ["orderId", "status", "customer", "items", "total"],
+  "additionalProperties": false
+}
