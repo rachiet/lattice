@@ -9,5 +9,6 @@
     "colour": { "type": "string", "enum": ["black", "white", "ginger", "tabby", "grey"] },
     "toys": { "type": "array", "items": { "type": "string" } }
   },
-  "required": ["name", "breed", "age", "colour"]
+  "required": ["name", "breed", "age", "colour"],
+  "additionalProperties": false
 }
