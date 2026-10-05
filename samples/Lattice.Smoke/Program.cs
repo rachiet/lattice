@@ -9,17 +9,18 @@ using Lattice;
 using Lattice.LLamaSharp;
 
 // Smoke test: load the model, generate, and check whether the output parses as JSON.
-// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--model PATH] [--sampler MODE] [--runs N] [--schema FILE]
+// Run from the repo root: dotnet run --project samples/Lattice.Smoke -- [--model PATH] [--sampler MODE] [--runs N] [--schema FILE] [--prompt TEXT]
 //   --model    the GGUF to load (default: models/qwen2.5-0.5b-instruct-q4_k_m.gguf)
-//   --sampler  plain (default), grammar (llama.cpp's built-in JSON grammar, grammars/json.gbnf)
-//              or lattice (Lattice's JSON mask)
+//   --sampler  plain (default) or lattice (Lattice's JSON mask)
 //   --runs     how many generations to run (default: 1)
 //   --schema   constrain lattice to a JSON Schema, and put that schema in the prompt
+//   --prompt   what to ask for, with no closing full stop
+//              (default: "Give me a JSON object describing a cat")
 
 var options = new Dictionary<string, string>();
 for (var i = 0; i < args.Length; i++)
 {
-    if (args[i] is not ("--model" or "--sampler" or "--runs" or "--schema"))
+    if (args[i] is not ("--model" or "--sampler" or "--runs" or "--schema" or "--prompt"))
         return Fail($"Unknown argument: {args[i]}");
     if (i + 1 == args.Length)
         return Fail($"{args[i]} needs a value");
@@ -31,9 +32,8 @@ if (!File.Exists(modelPath))
     return Fail($"Model not found: {Path.GetFullPath(modelPath)}");
 
 var sampler = options.GetValueOrDefault("--sampler", "plain");
-if (sampler is not ("plain" or "grammar" or "lattice"))
-    return Fail($"Unknown sampler: {sampler} (expected plain, grammar or lattice)");
-var useGrammar = sampler == "grammar";
+if (sampler is not ("plain" or "lattice"))
+    return Fail($"Unknown sampler: {sampler} (expected plain or lattice)");
 var useLattice = sampler == "lattice";
 
 var runs = 1;
@@ -56,28 +56,36 @@ NativeLibraryConfig.All.WithLogCallback((level, message) =>
 
 var parameters = new ModelParams(modelPath)
 {
-    ContextSize = 2048,
     GpuLayerCount = 99, // more than the model has, so every layer goes to the GPU
 };
 
 using var weights = LLamaWeights.LoadFromFile(parameters);
+
+// Use the full context the model was trained for.
+parameters.ContextSize = (uint)weights.ContextSize;
 var executor = new StatelessExecutor(weights, parameters);
 
 var template = new LLamaTemplate(weights) { AddAssistant = true };
+var request = options.GetValueOrDefault("--prompt", "Give me a JSON object describing a cat");
 template.Add("user", schemaText is null
-    ? "Give me a JSON object describing a cat."
-    : $"Give me a JSON object describing a cat, matching this JSON Schema:\n{schemaText}");
+    ? $"{request}."
+    : $"{request}, matching this JSON Schema:\n{schemaText}");
 var prompt = Encoding.UTF8.GetString(template.Apply());
 
-var gbnf = useGrammar ? File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "grammars", "json.gbnf")) : null;
+// Leave the rest of the context for the output.
+var maxTokens = weights.ContextSize - weights.Tokenize(prompt, true, true, Encoding.UTF8).Length;
+
+// A run that has not finished by then is stopped and counted as a runaway.
+var runLimit = TimeSpan.FromMinutes(2);
 
 // Decoding the vocabulary takes a moment, so build this once and reset it per run.
 using var lattice = useLattice ? new JsonSamplingPipeline(weights, schema) : null;
 
-Console.WriteLine($"mode: {(useLattice ? "lattice" : useGrammar ? "grammar" : "plain")}, runs: {runs}"
+Console.WriteLine($"mode: {sampler}, runs: {runs}, context: {weights.ContextSize}, max tokens: {maxTokens}"
                   + (schemaPath is null ? "" : $", schema: {schemaPath}"));
 
 var valid = 0;
+var runaways = 0;
 var totalPieces = 0;
 var totalSeconds = 0.0;
 
@@ -92,32 +100,42 @@ for (var run = 1; run <= runs; run++)
         lattice.Reset();
     }
 
-    ISamplingPipeline pipeline = useLattice ? lattice!
-                               : useGrammar ? new DefaultSamplingPipeline { Grammar = new Grammar(gbnf!, "root") }
-                               : new DefaultSamplingPipeline();
+    ISamplingPipeline pipeline = useLattice ? lattice! : new DefaultSamplingPipeline();
 
     var inferenceParams = new InferenceParams
     {
-        MaxTokens = 300, // enough room for the object to close
+        MaxTokens = maxTokens,
         AntiPrompts = ["<|im_end|>"],
         SamplingPipeline = pipeline,
     };
 
     var output = new StringBuilder();
     var pieces = 0;
+    bool runaway;
+    using var limit = new CancellationTokenSource(runLimit);
     var clock = Stopwatch.StartNew();
-    await foreach (var piece in executor.InferAsync(prompt, inferenceParams))
+    try
     {
-        output.Append(piece);
-        pieces++;
+        await foreach (var piece in executor.InferAsync(prompt, inferenceParams, limit.Token))
+        {
+            output.Append(piece);
+            pieces++;
+        }
+    }
+    catch (OperationCanceledException)
+    {
     }
     clock.Stop();
 
+    // The executor can stop quietly on cancellation instead of throwing.
+    runaway = limit.IsCancellationRequested;
+
     var text = output.ToString().Replace("<|im_end|>", "").Trim();
-    var violation = schemaText is null
-        ? Parses(text) ? null : "does not parse"
-        : SchemaViolation(text, schemaText);
+    var violation = runaway ? $"runaway, stopped after {runLimit.TotalMinutes:F0} min"
+                  : schemaText is null ? Parses(text) ? null : "does not parse"
+                  : SchemaViolation(text, schemaText);
     if (violation is null) valid++;
+    if (runaway) runaways++;
     totalPieces += pieces;
     totalSeconds += clock.Elapsed.TotalSeconds;
 
@@ -125,7 +143,7 @@ for (var run = 1; run <= runs; run++)
     Console.WriteLine(text);
 }
 
-Console.WriteLine($"\n=== {valid}/{runs} valid, {totalPieces / totalSeconds:F1} pieces/s ===");
+Console.WriteLine($"\n=== {valid}/{runs} valid, {runaways} runaway, {totalPieces / totalSeconds:F1} pieces/s ===");
 return 0;
 
 static int Fail(string message)
@@ -140,67 +158,18 @@ static bool Parses(string text)
     catch (JsonException) { return false; }
 }
 
-// Checks the output against the schema using only System.Text.Json, so a pass is
-// evidence about the mask rather than the mask agreeing with itself. Returns the
-// first violation found, or null when the object matches.
 static string? SchemaViolation(string text, string schemaText)
 {
-    JsonDocument parsed;
-    try { parsed = JsonDocument.Parse(text); }
+    JsonDocument document;
+    try { document = JsonDocument.Parse(text); }
     catch (JsonException e) { return $"does not parse ({e.Message})"; }
 
-    using var document = parsed;
-    using var schemaDocument = JsonDocument.Parse(schemaText);
+    using var _ = document;
+    var results = Json.Schema.JsonSchema.FromText(schemaText).Evaluate(
+        document.RootElement, new Json.Schema.EvaluationOptions { OutputFormat = Json.Schema.OutputFormat.List });
+    if (results.IsValid) return null;
 
-    var root = document.RootElement;
-    var schema = schemaDocument.RootElement;
-    var properties = schema.GetProperty("properties");
-
-    if (root.ValueKind != JsonValueKind.Object) return $"root is {root.ValueKind}, not an object";
-
-    foreach (var written in root.EnumerateObject())
-    {
-        if (!properties.TryGetProperty(written.Name, out var declared))
-            return $"undeclared property \"{written.Name}\"";
-
-        if (TypeMismatch(declared, written.Value) is { } mismatch)
-            return $"\"{written.Name}\": {mismatch}";
-
-        if (declared.TryGetProperty("enum", out var members)
-            && written.Value.ValueKind == JsonValueKind.String
-            && !members.EnumerateArray().Any(m => m.GetString() == written.Value.GetString()))
-            return $"\"{written.Name}\": \"{written.Value.GetString()}\" is not an enum member";
-
-        if (declared.TryGetProperty("items", out var items) && written.Value.ValueKind == JsonValueKind.Array)
-            foreach (var item in written.Value.EnumerateArray())
-                if (TypeMismatch(items, item) is { } itemMismatch)
-                    return $"\"{written.Name}\" item: {itemMismatch}";
-    }
-
-    if (schema.TryGetProperty("required", out var required))
-        foreach (var name in required.EnumerateArray())
-            if (!root.TryGetProperty(name.GetString()!, out _))
-                return $"missing required \"{name.GetString()}\"";
-
-    return null;
-}
-
-static string? TypeMismatch(JsonElement declared, JsonElement value)
-{
-    if (!declared.TryGetProperty("type", out var type) || type.GetString() is not { } expected)
-        return null;
-
-    var matches = expected switch
-    {
-        "string" => value.ValueKind == JsonValueKind.String,
-        "integer" => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _),
-        "number" => value.ValueKind == JsonValueKind.Number,
-        "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
-        "object" => value.ValueKind == JsonValueKind.Object,
-        "array" => value.ValueKind == JsonValueKind.Array,
-        "null" => value.ValueKind == JsonValueKind.Null,
-        _ => true,
-    };
-
-    return matches ? null : $"{value.ValueKind} is not {expected}";
+    var failure = results.Details?.LastOrDefault(d => d.Errors is { Count: > 0 });
+    return failure is null ? "does not match the schema"
+                           : $"{failure.InstanceLocation}: {failure.Errors!.Values.First()}";
 }
