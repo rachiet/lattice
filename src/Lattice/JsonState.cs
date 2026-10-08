@@ -67,8 +67,8 @@ public enum Expect
 /// into a ulong bitmask, one bit each.
 ///
 /// Without a schema the checker accepts any JSON object. With one it also
-/// enforces the declared property names, their types, the required ones and any
-/// enums.
+/// enforces the declared property names, their types, the required ones, any
+/// enums, and tagged unions — the tag first, then the branch it selects.
 public struct JsonState
 {
     /// Objects and arrays nested deeper than this are rejected.
@@ -419,7 +419,21 @@ public struct JsonState
         var members = _schema!.PropertyAt(CurrentFrame.Node, _property).Enum!;
 
         if (c == '"')
-            return (_candidates & members.EndingAt(_textPos)) != 0 && EndValue();
+        {
+            var finished = _candidates & members.EndingAt(_textPos);
+            if (finished == 0) return false;
+
+            // A union's tag picks the branch the rest of this object follows. The
+            // tag is already written, so it counts as used in the branch.
+            if (_schema!.TryGetBranch(CurrentFrame.Node, BitOperations.TrailingZeroCount(finished),
+                                     out var branch, out var tag))
+            {
+                CurrentFrame.Node = branch;
+                CurrentFrame.Used = 1UL << tag;
+            }
+
+            return EndValue();
+        }
 
         if (c == '\\') return false;  // members are matched literally
         return Narrow(members, c);

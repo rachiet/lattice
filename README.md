@@ -157,8 +157,10 @@ is evidence rather than a restatement.
 ## Schema support
 
 Honoured: `type` (`string`, `integer`, `number`, `boolean`, `object`, `array`,
-`null`), `properties`, `required`, `items`, and `enum` when every member is a
-string. An undeclared `type` accepts any value, and an object with no
+`null`), `properties`, `required`, `items`, `enum` when every member is a
+string, and `const` when it is a string. `oneOf` is supported as a tagged union
+of objects: every branch sets the same property to a different string `const`,
+that property is written first, and its value selects the branch. An undeclared `type` accepts any value, and an object with no
 `properties` is free-form — checked as plain JSON until it closes.
 
 Limits: 64 properties per object, 16 levels of declared object nesting, ASCII

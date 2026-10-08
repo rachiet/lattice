@@ -44,10 +44,16 @@ public sealed class JsonSchema
 
     /// Compiles a JSON Schema document.
     ///
-    /// The root must declare `"type": "object"` and `"properties"`. Recognised
-    /// keywords are `type`, `properties`, `required`, `items` and `enum`; any
-    /// other keyword is ignored. Properties the schema does not declare are
-    /// never legal, whatever `additionalProperties` says.
+    /// The root must declare `"type": "object"` and either `"properties"` or
+    /// `"oneOf"`. Recognised keywords are `type`, `properties`, `required`,
+    /// `items`, `enum`, `const` and `oneOf`; any other keyword is ignored.
+    /// Properties the schema does not declare are never legal, whatever
+    /// `additionalProperties` says.
+    ///
+    /// `oneOf` is supported on objects only, as a tagged union: every branch
+    /// declares the same property with a different string `const`. That property
+    /// must be written first, and its value decides which branch the rest of the
+    /// object follows.
     public static JsonSchema Parse(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
@@ -63,7 +69,8 @@ public sealed class JsonSchema
 
         var nodes = new List<Node>();
         if (AddNode(nodes, root, depth: 1) < 0)
-            throw new ArgumentException("the root schema must declare \"properties\"", nameof(json));
+            throw new ArgumentException(
+                "the root schema must declare \"properties\" or \"oneOf\"", nameof(json));
 
         return new JsonSchema(nodes.ToArray());
     }
@@ -74,10 +81,30 @@ public sealed class JsonSchema
 
     internal Property PropertyAt(int node, int index) => _nodes[node].Properties[index];
 
+    /// For a union node: the node the object continues as once its tag holds
+    /// enum member `member`, and the tag's property index within that node.
+    /// False when `node` is not a union.
+    internal bool TryGetBranch(int node, int member, out int branch, out int tag)
+    {
+        var union = _nodes[node];
+        if (union.Branches is null)
+        {
+            branch = tag = -1;
+            return false;
+        }
+
+        branch = union.Branches[member];
+        tag = union.BranchTags![member];
+        return true;
+    }
+
     /// Compiles one object schema and returns its node index, or -1 when the
     /// schema declares no properties and the object is therefore free-form.
     static int AddNode(List<Node> nodes, JsonElement schema, int depth)
     {
+        if (schema.TryGetProperty("oneOf", out var oneOf))
+            return AddUnion(nodes, schema, oneOf, depth);
+
         if (!schema.TryGetProperty("properties", out var properties)
             || properties.ValueKind != JsonValueKind.Object)
             return -1;
@@ -119,6 +146,95 @@ public sealed class JsonSchema
         return index;
     }
 
+    /// Compiles a tagged union. The union node declares one property, the tag,
+    /// whose value is an enum of the branches' `const` values; each branch is
+    /// compiled as an ordinary object node at the same level.
+    static int AddUnion(List<Node> nodes, JsonElement schema, JsonElement oneOf, int depth)
+    {
+        if (schema.TryGetProperty("properties", out _))
+            throw new ArgumentException("an object declares both \"properties\" and \"oneOf\"");
+
+        if (oneOf.ValueKind != JsonValueKind.Array || oneOf.GetArrayLength() == 0)
+            throw new ArgumentException("\"oneOf\" must be a non-empty array");
+
+        if (oneOf.GetArrayLength() > MaxProperties)
+            throw new ArgumentException(
+                $"\"oneOf\" has {oneOf.GetArrayLength()} branches; the limit is {MaxProperties}");
+
+        if (depth > MaxDepth)
+            throw new ArgumentException($"objects are nested deeper than {MaxDepth}");
+
+        var branches = oneOf.EnumerateArray().ToArray();
+        foreach (var branch in branches)
+            if (branch.ValueKind != JsonValueKind.Object
+                || TypeOf(branch) is not (JsonType.Object or JsonType.Any)
+                || !branch.TryGetProperty("properties", out var declared)
+                || declared.ValueKind != JsonValueKind.Object)
+                throw new ArgumentException("every \"oneOf\" branch must be an object declaring \"properties\"");
+
+        var tag = TagOf(branches);
+
+        var index = nodes.Count;
+        nodes.Add(null!);
+
+        var values = new List<string>();
+        var branchNodes = new int[branches.Length];
+        var branchTags = new int[branches.Length];
+        for (var i = 0; i < branches.Length; i++)
+        {
+            var properties = branches[i].GetProperty("properties");
+            var value = ConstOf(properties.GetProperty(tag))!;
+            if (values.Contains(value))
+                throw new ArgumentException($"two \"oneOf\" branches set \"{tag}\" to \"{value}\"");
+
+            values.Add(value);
+            branchNodes[i] = AddNode(nodes, branches[i], depth);
+            branchTags[i] = properties.EnumerateObject().TakeWhile(p => p.Name != tag).Count();
+        }
+
+        nodes[index] = new Node
+        {
+            Properties = [new Property(JsonType.String, -1, JsonType.Any, -1, new PrefixTable(values))],
+            Keys = new PrefixTable([tag]),
+            Required = 1,
+            Branches = branchNodes,
+            BranchTags = branchTags,
+        };
+
+        return index;
+    }
+
+    /// The one property every branch fixes to a string with `const`.
+    static string TagOf(JsonElement[] branches)
+    {
+        List<string>? shared = null;
+        foreach (var branch in branches)
+        {
+            var fixedHere = branch.GetProperty("properties").EnumerateObject()
+                .Where(p => ConstOf(p.Value) is not null)
+                .Select(p => p.Name);
+
+            shared = shared is null ? fixedHere.ToList() : shared.Intersect(fixedHere).ToList();
+        }
+
+        return shared!.Count switch
+        {
+            1 => shared[0],
+            0 => throw new ArgumentException(
+                "\"oneOf\" needs a property that every branch sets to a string \"const\""),
+            _ => throw new ArgumentException(
+                $"\"oneOf\" branches share several \"const\" properties ({string.Join(", ", shared)}); exactly one is allowed"),
+        };
+    }
+
+    /// The `const` value of a property schema, when it is a string.
+    static string? ConstOf(JsonElement schema) =>
+        schema.ValueKind == JsonValueKind.Object
+        && schema.TryGetProperty("const", out var value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
     static Property BuildProperty(List<Node> nodes, JsonElement schema, int depth)
     {
         if (schema.ValueKind != JsonValueKind.Object)
@@ -147,9 +263,12 @@ public sealed class JsonSchema
     }
 
     /// The `enum` members, when every one of them is a string. An enum with a
-    /// non-string member is ignored.
+    /// non-string member is ignored. A string `const` is an enum of one member,
+    /// and takes precedence over `enum`.
     static PrefixTable? StringEnum(JsonElement schema)
     {
+        if (ConstOf(schema) is { } only) return new PrefixTable([only]);
+
         if (!schema.TryGetProperty("enum", out var choices)
             || choices.ValueKind != JsonValueKind.Array
             || choices.GetArrayLength() == 0)
@@ -209,6 +328,13 @@ public sealed class JsonSchema
         public required Property[] Properties { get; init; }
         public required PrefixTable Keys { get; init; }
         public required ulong Required { get; init; }
+
+        /// For a union: the node each tag value continues as, in enum member
+        /// order. Null for an ordinary object.
+        public int[]? Branches { get; init; }
+
+        /// For a union: the tag's property index within each branch node.
+        public int[]? BranchTags { get; init; }
     }
 }
 
