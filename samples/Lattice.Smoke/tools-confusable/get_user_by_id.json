@@ -1,0 +1,15 @@
+{
+  "name": "get_user_by_id",
+  "description": "Look up a user by their numeric id.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  }
+}

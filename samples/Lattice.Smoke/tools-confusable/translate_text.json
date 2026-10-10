@@ -1,0 +1,20 @@
+{
+  "name": "translate_text",
+  "description": "Translate text into any language.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      },
+      "target_language": {
+        "type": "string",
+        "description": "Language name, e.g. German"
+      }
+    },
+    "required": [
+      "text",
+      "target_language"
+    ]
+  }
+}

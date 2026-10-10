@@ -1,0 +1,22 @@
+[
+  {"prompt": "Convert 50 US dollars to euros.", "tool": "convert_usd_to_eur"},
+  {"prompt": "How much is 200 USD in British pounds?", "tool": "convert_usd_to_gbp"},
+  {"prompt": "Convert 75 USD to Japanese yen.", "tool": "convert_currency"},
+  {"prompt": "What is 1000 US dollars in Indian rupees?", "tool": "convert_currency"},
+  {"prompt": "Change 30 euros into British pounds.", "tool": "convert_currency"},
+  {"prompt": "Translate 'good morning' into French.", "tool": "translate_to_french"},
+  {"prompt": "Translate 'where is the station' to Spanish.", "tool": "translate_to_spanish"},
+  {"prompt": "Translate 'thank you very much' into German.", "tool": "translate_text"},
+  {"prompt": "How do you say 'good night' in Italian?", "tool": "translate_text"},
+  {"prompt": "Translate 'I love books' into Japanese.", "tool": "translate_text"},
+  {"prompt": "Look up the user with id 4821.", "tool": "get_user_by_id"},
+  {"prompt": "Find the account for jane@example.com.", "tool": "get_user_by_email"},
+  {"prompt": "Find the user whose phone number is 555-0199.", "tool": "find_users"},
+  {"prompt": "Look up the user named Carlos Diaz.", "tool": "find_users"},
+  {"prompt": "Which user has the username dev_kim?", "tool": "find_users"},
+  {"prompt": "Read the file data/sales.csv.", "tool": "read_csv_file"},
+  {"prompt": "Open config/settings.json.", "tool": "read_json_file"},
+  {"prompt": "Read the file logs/app.log.", "tool": "read_file"},
+  {"prompt": "Show me the contents of docs/readme.md.", "tool": "read_file"},
+  {"prompt": "Load the XML file feeds/news.xml.", "tool": "read_file"}
+]

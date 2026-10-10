@@ -1,0 +1,12 @@
+{
+  "name": "get_forecast",
+  "description": "Get the weather forecast for a city for the coming days.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "city": { "type": "string", "description": "City name, e.g. Paris" },
+      "days": { "type": "integer", "description": "How many days ahead, 1 to 14" }
+    },
+    "required": ["city", "days"]
+  }
+}

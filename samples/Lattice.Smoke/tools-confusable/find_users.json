@@ -1,0 +1,26 @@
+{
+  "name": "find_users",
+  "description": "Find users by any field.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "field": {
+        "type": "string",
+        "enum": [
+          "id",
+          "email",
+          "phone",
+          "name",
+          "username"
+        ]
+      },
+      "value": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "field",
+      "value"
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "convert_currency",
+  "description": "Convert an amount between any two currencies.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number"
+      },
+      "from": {
+        "type": "string",
+        "description": "ISO currency code, e.g. USD"
+      },
+      "to": {
+        "type": "string",
+        "description": "ISO currency code, e.g. JPY"
+      }
+    },
+    "required": [
+      "amount",
+      "from",
+      "to"
+    ]
+  }
+}

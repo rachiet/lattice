@@ -1,0 +1,20 @@
+{
+  "name": "create_event",
+  "description": "Create a calendar event.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string" },
+      "start": { "type": "string", "description": "Start date and time, e.g. 2026-10-10 09:00" },
+      "attendees": { "type": "array", "items": { "type": "string" } },
+      "reminder": {
+        "type": "object",
+        "properties": {
+          "minutes": { "type": "integer", "description": "Minutes before the start" }
+        },
+        "required": ["minutes"]
+      }
+    },
+    "required": ["title", "start"]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "convert_usd_to_gbp",
+  "description": "Convert US dollars to British pounds.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "description": "Amount in US dollars"
+      }
+    },
+    "required": [
+      "amount"
+    ]
+  }
+}

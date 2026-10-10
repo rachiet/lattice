@@ -1,0 +1,15 @@
+{
+  "name": "translate_to_french",
+  "description": "Translate text into French.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ]
+  }
+}

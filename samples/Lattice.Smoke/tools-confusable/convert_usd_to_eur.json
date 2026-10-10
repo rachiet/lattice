@@ -1,0 +1,16 @@
+{
+  "name": "convert_usd_to_eur",
+  "description": "Convert US dollars to euros.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "description": "Amount in US dollars"
+      }
+    },
+    "required": [
+      "amount"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "search_products",
+  "description": "Search the product catalogue.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string" },
+      "category": { "type": "string", "enum": ["electronics", "clothing", "sports", "home", "books"] },
+      "max_price": { "type": "number", "description": "Highest price in dollars" },
+      "in_stock": { "type": "boolean", "description": "Only items in stock" }
+    },
+    "required": ["query"]
+  }
+}

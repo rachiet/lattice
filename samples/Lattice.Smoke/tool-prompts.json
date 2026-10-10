@@ -1,0 +1,12 @@
+[
+  { "prompt": "What's the weather in Tokyo right now?", "tool": "get_weather" },
+  { "prompt": "Is it cold in Oslo at the moment? Tell me in fahrenheit.", "tool": "get_weather" },
+  { "prompt": "Will it rain in London over the next 5 days?", "tool": "get_forecast" },
+  { "prompt": "Give me the weather forecast for Berlin for the coming week.", "tool": "get_forecast" },
+  { "prompt": "Email alice@example.com to say the meeting moved to 3pm.", "tool": "send_email" },
+  { "prompt": "Send bob@example.com an email with the subject 'Invoice' telling him the invoice is attached.", "tool": "send_email" },
+  { "prompt": "Schedule a team standup tomorrow at 9am with Priya and Sam.", "tool": "create_event" },
+  { "prompt": "Put a dentist appointment on my calendar for Friday at 2pm and remind me 30 minutes before.", "tool": "create_event" },
+  { "prompt": "Find me wireless headphones under $100 that are in stock.", "tool": "search_products" },
+  { "prompt": "Search for running shoes in the sports category.", "tool": "search_products" }
+]

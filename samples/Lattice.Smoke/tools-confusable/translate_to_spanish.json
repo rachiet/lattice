@@ -1,0 +1,15 @@
+{
+  "name": "translate_to_spanish",
+  "description": "Translate text into Spanish.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ]
+  }
+}
