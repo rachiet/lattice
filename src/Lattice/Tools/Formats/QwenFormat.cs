@@ -43,10 +43,9 @@ public sealed class QwenFormat : IToolFormat
             prompt.Append("}}");
         }
 
-        // The template's own text, double braces included.
         prompt.Append("\n</tools>\n\nFor each function call, return a json object with function name and ");
         prompt.Append("arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n");
-        prompt.Append("{{\"name\": <function-name>, \"arguments\": <args-json-object>}}\n</tool_call><|im_end|>\n");
+        prompt.Append("{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n");
 
         prompt.Append("<|im_start|>user\n").Append(request).Append("<|im_end|>\n");
         prompt.Append("<|im_start|>assistant\n").Append(CallOpen).Append('\n');

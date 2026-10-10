@@ -42,7 +42,7 @@ public class QwenFormatTests
             "\"body\": {\"type\": \"string\"}}, \"required\": [\"to\", \"body\"]}}}\n" +
             "</tools>\n\nFor each function call, return a json object with function name and arguments " +
             "within <tool_call></tool_call> XML tags:\n<tool_call>\n" +
-            "{{\"name\": <function-name>, \"arguments\": <args-json-object>}}\n</tool_call><|im_end|>\n" +
+            "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n" +
             "<|im_start|>user\nWhat's the weather in Paris?<|im_end|>\n" +
             "<|im_start|>assistant\n<tool_call>\n";
 
