@@ -1,7 +1,16 @@
 # Lattice
 
-A constrained decoding engine for .NET. It makes schema-invalid LLM output
-impossible rather than unlikely.
+A constrained decoding engine for .NET. It makes two kinds of LLM output
+structurally valid every time:
+
+- **JSON Schema** — the output is a JSON object that matches your schema.
+- **Tool calling** — the output is a call to one of your registered tools, with
+  arguments that match that tool's schema. See [Tool calling](#tool-calling).
+
+Lattice guarantees the shape, not the content. The model can still be wrong: a
+made-up value in a valid object, or a valid call to the wrong tool. What it
+cannot produce is JSON that fails to parse, a field your schema doesn't declare,
+or a tool that isn't registered.
 
 At each generation step a local model emits a logit for every token in its
 vocabulary (~151k for Qwen2.5). Before a token is sampled, Lattice sets the
@@ -134,6 +143,62 @@ var id = Sample(logits);  // your sampler
 mask.Commit(id);          // advance the state
 ```
 
+## Tool calling
+
+A tool call looks like this:
+
+```json
+{"name": "get_weather", "arguments": {"city": "Paris"}}
+```
+
+Which arguments are legal depends on the value of `name`, so no single object
+schema describes it. Lattice handles it as a tagged union: a `oneOf` with one
+branch per tool, where each branch fixes `name` to that tool's name.
+
+```
+output so far                          legal next
+{"                                     n             name must come first
+{"name": "                             g or s        only registered names
+{"name": "get_weather"                 , or space    name complete → get_weather's branch
+{"name": "get_weather", "arguments": { "             then only city: get_weather's arguments
+```
+
+Once the name's closing quote is written, the rest of the object follows that
+tool's schema, through the same checks as any other object. Inside `arguments`
+keys may come in any order.
+
+You don't write the union yourself. Register tools, and a format for your
+model family builds the prompt and the schema:
+
+```csharp
+using Lattice.Tools;
+using Lattice.Tools.Formats;
+
+var tools = new ToolRegistry()
+    .Add("get_weather", "Get the current weather for a city.",
+         """{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}""")
+    .Add("send_email", "Send an email.",
+         """{"type":"object","properties":{"to":{"type":"string"},"body":{"type":"string"}},"required":["to","body"]}""");
+
+var format = new QwenFormat();
+var prompt = format.Prompt(tools, "What's the weather in Paris?");
+var schema = JsonSchema.Parse(format.Schema(tools));
+
+using var pipeline = new JsonSamplingPipeline(weights, schema);
+// generate as above, then:
+var call = format.Parse(output);   // call.Name, call.Arguments
+```
+
+`QwenFormat` lists the tools in the system turn the way Qwen2.5's chat template
+does, and ends the prompt with `<tool_call>` already written, so the model's
+reply is the call itself. Another model family needs its own `IToolFormat`; the
+library underneath does not change.
+
+What this guarantees: the name is a registered tool, and the arguments match
+that tool's schema, within the keywords listed under
+[Schema support](#schema-support). What it cannot guarantee: that the model
+picks the right tool for the job.
+
 ## Running the sample
 
 Needs .NET 8 and a GGUF in `models/`. From the repo root:
@@ -148,11 +213,29 @@ dotnet run -c Release --project samples/Lattice.Smoke -- --sampler lattice --run
 # Lattice's mask, constrained to a schema
 dotnet run -c Release --project samples/Lattice.Smoke -- \
     --sampler lattice --schema samples/Lattice.Smoke/schemas/cat.json --runs 5
+
+# tool calling: one request against a folder of tools
+dotnet run -c Release --project samples/Lattice.Smoke -- \
+    --sampler lattice --tools samples/Lattice.Smoke/tools --prompt "What's the weather in Tokyo?"
+
+# tool calling: a labelled prompt set, each prompt run 5 times
+dotnet run -c Release --project samples/Lattice.Smoke -- \
+    --sampler lattice --tools samples/Lattice.Smoke/tools-confusable \
+    --prompts samples/Lattice.Smoke/confusable-prompts.json --runs 5
 ```
 
 Each run is checked for validity and printed. With `--schema` the output is
 validated against the schema independently of Lattice's own checker, so a pass
 is evidence rather than a restatement.
+
+With `--tools`, every `.json` file in the folder is one tool, with `name`,
+`description` and `parameters`, and the model must answer with a call. A call is
+valid when it parses, names a registered tool, and matches that tool's schema,
+checked independently as above; the summary also counts invented tool names.
+
+`--prompts` replaces `--prompt` with a JSON array of `{ "prompt", "tool" }`
+pairs. Each prompt runs `--runs` times, and the summary adds how often the
+expected tool was called, overall and per prompt.
 
 ## Schema support
 
@@ -160,17 +243,24 @@ Honoured: `type` (`string`, `integer`, `number`, `boolean`, `object`, `array`,
 `null`), `properties`, `required`, `items`, `enum` when every member is a
 string, and `const` when it is a string. `oneOf` is supported as a tagged union
 of objects: every branch sets the same property to a different string `const`,
-that property is written first, and its value selects the branch. An undeclared `type` accepts any value, and an object with no
-`properties` is free-form — checked as plain JSON until it closes.
+that property is written first, and its value selects the branch. An
+undeclared `type` accepts any value, and an object with no `properties` is
+free-form — checked as plain JSON until it closes.
 
-Limits: 64 properties per object, 16 levels of declared object nesting, ASCII
-property names, and no escape sequences inside a declared name.
+Every other keyword is ignored — for example `minimum` and `maximum`, `pattern`
+and `format`, `anyOf` and `$ref`. `additionalProperties` is ignored too:
+undeclared properties are never legal. A `oneOf` that is not a tagged union is
+refused when the schema is compiled.
+
+Limits: 64 properties per object, 64 members per enum, 64 branches per `oneOf`,
+16 levels of declared object nesting, ASCII property names and enum values, and
+no escape sequences inside either.
 
 ## Layout
 
 | path | what it is |
 |---|---|
-| `src/Lattice` | the library — `JsonState`, `JsonSchema`, `JsonMask`. No dependencies beyond the .NET Base Class Library. |
+| `src/Lattice` | the library — `JsonState`, `JsonSchema`, `JsonMask`, and in `Tools/` the tool registry and model formats. No dependencies beyond the .NET Base Class Library. |
 | `src/Lattice.LLamaSharp` | the `ISamplingPipeline` adapter. |
 | `tests/Lattice.Tests` | xUnit tests. No model needed. |
 | `samples/Lattice.Smoke` | console app that drives a real model. |
@@ -196,3 +286,21 @@ were.
 
 These results are for these schemas with Qwen2.5-0.5B-Instruct. Other models,
 schemas and prompts will give different numbers for plain generation.
+
+### Tool calling
+
+Same model and machine, prompted in Qwen's own tool-calling format: 20 prompts
+against twelve tools, each run 5 times.
+
+| | plain | lattice |
+|---|---|---|
+| valid calls | 88/100 | 100/100 |
+
+A call counts as valid when it parses, names a registered tool, and its
+arguments match that tool's schema — checked independently of Lattice, as
+above.
+
+In plain English: prompted the way the model was trained to call tools, 12 of
+100 calls were still unusable — a tool that doesn't exist, a wrong argument
+type, or JSON that doesn't parse. Through Lattice, every call could be executed
+as written.
